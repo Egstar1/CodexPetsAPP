@@ -566,55 +566,268 @@ class MessageEditor(QDialog):
         super().__init__(parent)
         self.db = db
         self.setWindowTitle("📝 管理对话内容")
-        self.setFixedSize(500, 400)
+        self.setFixedSize(520, 520)
+        self.setStyleSheet("""
+            MessageEditor {
+                background: #f5f6fa;
+                border-radius: 12px;
+            }
+            QComboBox {
+                background: white;
+                border: 2px solid #e0e3eb;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-size: 13px;
+                color: #2d3436;
+                min-width: 100px;
+                max-height: 34px;
+            }
+            QComboBox:hover {
+                border-color: #6c5ce7;
+            }
+            QComboBox:focus {
+                border-color: #6c5ce7;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #888;
+                margin-right: 4px;
+            }
+            QComboBox QAbstractItemView {
+                background: white;
+                border: 1px solid #d0d4e0;
+                color: #2d3436;
+                selection-background-color: #6c5ce7;
+                selection-color: white;
+                outline: none;
+            }
+            QComboBox QAbstractItemView::item {
+                padding: 4px 10px;
+                min-height: 22px;
+                color: #2d3436;
+            }
+            QComboBox QAbstractItemView::item:hover {
+                background: #f0edff;
+            }
+            QComboBox QAbstractItemView QScrollBar:vertical {
+                width: 5px;
+                background: transparent;
+            }
+            QComboBox QAbstractItemView QScrollBar::handle:vertical {
+                background: #c0c4d0;
+                border-radius: 3px;
+                min-height: 20px;
+            }
+            QComboBox QAbstractItemView QScrollBar::handle:vertical:hover {
+                background: #a0a5b5;
+            }
+            QComboBox QAbstractItemView QScrollBar::add-line:vertical,
+            QComboBox QAbstractItemView QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+            QTextEdit {
+                background: white;
+                border: 2px solid #e0e3eb;
+                border-radius: 6px;
+                padding: 8px;
+                font-size: 13px;
+                color: #2d3436;
+            }
+            QTextEdit:hover {
+                border-color: #6c5ce7;
+            }
+            QTextEdit:focus {
+                border-color: #6c5ce7;
+            }
+            QScrollArea {
+                border: 2px solid #e0e3eb;
+                border-radius: 8px;
+                background: white;
+            }
+            QScrollBar:vertical {
+                width: 6px;
+                background: transparent;
+                border-radius: 3px;
+            }
+            QScrollBar::handle:vertical {
+                background: #d1d5e0;
+                border-radius: 3px;
+                min-height: 30px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #b0b5c5;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0;
+            }
+        """)
         self._setup_ui()
 
     def _setup_ui(self):
-        layout = QVBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
+        header = QLabel("📝 管理对话内容")
+        header.setStyleSheet("""
+            font-size: 18px;
+            font-weight: bold;
+            color: white;
+            background: #6c5ce7;
+            padding: 18px 24px;
+            border-radius: 0;
+        """)
+        header.setAlignment(Qt.AlignCenter)
+        root.addWidget(header)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 20, 24, 20)
+        body.setSpacing(14)
+
+        form_card = QFrame()
+        form_card.setStyleSheet("""
+            QFrame {
+                background: white;
+                border: 1px solid #e8eaf0;
+                border-radius: 12px;
+            }
+        """)
+        form = QVBoxLayout(form_card)
+        form.setContentsMargins(20, 18, 20, 18)
+        form.setSpacing(12)
+
+        row1 = QHBoxLayout()
+        row1.setSpacing(16)
+        topic_group = QVBoxLayout()
+        topic_group.setSpacing(6)
+        topic_lbl = QLabel("选择分类")
+        topic_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #6c5ce7; letter-spacing: 0.5px; background: transparent;")
+        topic_group.addWidget(topic_lbl)
         self.topic_combo = QComboBox()
         topics = self.db.get_topics()
         for t in topics:
             self.topic_combo.addItem(t["display_name"], t["id"])
-        layout.addWidget(QLabel("选择分类："))
-        layout.addWidget(self.topic_combo)
+        topic_group.addWidget(self.topic_combo)
+        row1.addLayout(topic_group)
 
+        period_group = QVBoxLayout()
+        period_group.setSpacing(6)
+        period_lbl = QLabel("时段")
+        period_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #6c5ce7; letter-spacing: 0.5px; background: transparent;")
+        period_group.addWidget(period_lbl)
         self.period_combo = QComboBox()
-        for p in ["general", "morning", "forenoon", "pre_lunch", "lunch", "afternoon", "evening", "night"]:
-            self.period_combo.addItem(p)
-        layout.addWidget(QLabel("时段："))
-        layout.addWidget(self.period_combo)
+        period_labels = {
+            "general": "通用", "morning": "早晨", "forenoon": "上午",
+            "pre_lunch": "午餐前", "lunch": "午餐", "afternoon": "下午",
+            "evening": "傍晚", "night": "夜间"
+        }
+        for k, v in period_labels.items():
+            self.period_combo.addItem(v, k)
+        period_group.addWidget(self.period_combo)
+        row1.addLayout(period_group)
+        form.addLayout(row1)
 
+        content_lbl = QLabel("对话内容")
+        content_lbl.setStyleSheet("font-size: 12px; font-weight: 600; color: #6c5ce7; letter-spacing: 0.5px; background: transparent;")
+        form.addWidget(content_lbl)
         self.text_edit = QTextEdit()
         self.text_edit.setPlaceholderText("输入新的对话内容...")
-        self.text_edit.setMaximumHeight(100)
-        layout.addWidget(QLabel("对话内容："))
-        layout.addWidget(self.text_edit)
+        self.text_edit.setMaximumHeight(90)
+        form.addWidget(self.text_edit)
 
-        btn = QPushButton("➕ 添加")
-        btn.clicked.connect(self._add)
-        layout.addWidget(btn)
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(10)
+        btn_row.addStretch()
+        self.add_btn = QPushButton("✚ 添加")
+        self.add_btn.setStyleSheet("""
+            QPushButton {
+                background: #6c5ce7;
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 28px;
+                font-size: 14px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #5a4bd1;
+            }
+            QPushButton:pressed {
+                background: #4a3db8;
+            }
+        """)
+        self.add_btn.clicked.connect(self._add)
+        btn_row.addWidget(self.add_btn)
+        form.addLayout(btn_row)
 
-        layout.addWidget(QLabel("已保存的对话："))
+        body.addWidget(form_card)
+
+        saved_label = QLabel("💾 已保存的对话")
+        saved_label.setStyleSheet("font-size: 14px; font-weight: 700; color: #2d3436; margin-top: 4px; background: transparent;")
+        body.addWidget(saved_label)
+
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setMinimumHeight(120)
         self.list_widget = QWidget()
+        self.list_widget.setStyleSheet("background: transparent;")
         self.list_layout = QVBoxLayout(self.list_widget)
+        self.list_layout.setContentsMargins(8, 8, 8, 8)
+        self.list_layout.setSpacing(6)
         scroll.setWidget(self.list_widget)
-        layout.addWidget(scroll)
+        body.addWidget(scroll, 1)
+
+        root.addLayout(body)
 
         self._refresh()
 
     def _refresh(self):
         for i in reversed(range(self.list_layout.count())):
-            self.list_layout.itemAt(i).widget().deleteLater()
+            item = self.list_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().deleteLater()
         msgs = self.db.conn.execute(
             "SELECT content, source FROM messages WHERE source='user' ORDER BY id DESC LIMIT 20"
         ).fetchall()
         for row in msgs:
-            lbl = QLabel(f"💬 {row['content'][:50]}")
-            lbl.setStyleSheet("color: #666; padding: 4px;")
-            self.list_layout.addWidget(lbl)
+            text = row["content"][:50] + ("..." if len(row["content"]) > 50 else "")
+            card = QFrame()
+            card.setStyleSheet("""
+                QFrame {
+                    background: #f8f9fd;
+                    border: 1px solid #eef0f5;
+                    border-radius: 8px;
+                }
+                QFrame:hover {
+                    background: #f0edff;
+                    border-color: #d5cef0;
+                }
+            """)
+            cl = QHBoxLayout(card)
+            cl.setContentsMargins(12, 8, 12, 8)
+            icon_label = QLabel("💬")
+            icon_label.setStyleSheet("font-size: 14px; background: transparent;")
+            cl.addWidget(icon_label)
+            text_label = QLabel(text)
+            text_label.setStyleSheet("""
+                color: #555;
+                font-size: 12px;
+                background: transparent;
+            """)
+            text_label.setWordWrap(True)
+            cl.addWidget(text_label, 1)
+            self.list_layout.addWidget(card)
+        if not msgs:
+            empty = QLabel("还没有自定义对话，在上方添加一条吧 ✨")
+            empty.setStyleSheet("color: #aaa; font-size: 12px; padding: 20px; background: transparent;")
+            empty.setAlignment(Qt.AlignCenter)
+            self.list_layout.addWidget(empty)
         self.list_layout.addStretch()
 
     def _add(self):
@@ -622,7 +835,7 @@ class MessageEditor(QDialog):
         if not content:
             return
         topic_id = self.topic_combo.currentData()
-        period = self.period_combo.currentText()
+        period = self.period_combo.currentData()
         self.db.add_message(topic_id, content, period)
         self.text_edit.clear()
         self._refresh()
@@ -1063,9 +1276,26 @@ class PetWindow(QWidget):
         if 17 <= h < 19: return "evening"
         return "night"
 
+    def _refresh_pets(self):
+        self.pets = discover_pets()
+        if self.current_pet_index >= len(self.pets):
+            self.current_pet_index = 0
+        if self.pets:
+            current_folder = self.assets.folder if self.assets else None
+            found = False
+            for i, p in enumerate(self.pets):
+                if p.folder == current_folder:
+                    self.current_pet_index = i
+                    found = True
+                    break
+            if not found:
+                self.current_pet_index = 0
+            self._load_pet(self.current_pet_index)
+
     def _open_store(self):
         dialog = StoreDialog(self.db, self)
         dialog.exec()
+        self._refresh_pets()
 
     def _open_message_editor(self):
         dialog = MessageEditor(self.db, self)
@@ -1223,10 +1453,22 @@ class StoreDialog(QDialog):
             cl.addWidget(owner_lbl)
 
         if installed:
-            btn = QLabel("✅ 已安装")
-            btn.setStyleSheet("color: #28a745; font-size: 11px; padding: 2px;")
-            btn.setAlignment(Qt.AlignCenter)
-            cl.addWidget(btn)
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            lbl = QLabel("✅ 已安装")
+            lbl.setStyleSheet("color: #28a745; font-size: 11px; padding: 2px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            row.addWidget(lbl)
+            del_btn = QPushButton("🗑")
+            del_btn.setFixedSize(28, 24)
+            del_btn.setStyleSheet("""
+                QPushButton { background: #ff6b6b; color: white; border: none;
+                            border-radius: 4px; font-size: 11px; }
+                QPushButton:hover { background: #e05555; }
+            """)
+            del_btn.clicked.connect(lambda checked, p=pid, n=name, b=del_btn: self._delete_pet(p, n, base_dir, b))
+            row.addWidget(del_btn)
+            cl.addLayout(row)
         else:
             btn = QPushButton("⬇ 下载")
             btn.setStyleSheet("""
@@ -1320,6 +1562,27 @@ class StoreDialog(QDialog):
 
         threading.Thread(target=do, daemon=True).start()
 
+    def _delete_pet(self, pid, name, base_dir, btn):
+        reply = QMessageBox.question(
+            self,
+            "确认删除",
+            f"确定要删除桌宠「{name}」吗？\n删除后需要重新下载才能使用。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        pet_folder = os.path.join(base_dir, pid)
+        try:
+            import shutil
+            shutil.rmtree(pet_folder)
+            self._filter_display()
+            if isinstance(self.parent(), PetWindow):
+                self.parent()._refresh_pets()
+        except Exception as e:
+            QMessageBox.warning(self, "删除失败", f"删除「{name}」失败：{str(e)}")
+
     def customEvent(self, event):
         if isinstance(event, _UIEvent):
             event.fn()
@@ -1334,6 +1597,7 @@ class _UIEvent(QEvent):
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName("CodexPets")
+    app.setQuitOnLastWindowClosed(False)
 
     icon_path = os.path.join(_get_base_dir(), "CodexPets.png")
     if os.path.exists(icon_path):
