@@ -505,14 +505,16 @@ class SetupWizard(QDialog):
             for j in range(3):
                 idx = i + j
                 if idx >= len(all_topics):
-                    row.addStretch()
-                    break
-                t = all_topics[idx]
-                cb = QCheckBox(t["display_name"])
-                cb.setChecked(bool(t["enabled"]))
-                cb.setCursor(Qt.PointingHandCursor)
-                self.topic_checks[t["name"]] = cb
-                row.addWidget(cb, 1)
+                    spacer = QWidget()
+                    spacer.setStyleSheet("background: transparent;")
+                    row.addWidget(spacer, 1)
+                else:
+                    t = all_topics[idx]
+                    cb = QCheckBox(t["display_name"])
+                    cb.setChecked(bool(t["enabled"]))
+                    cb.setCursor(Qt.PointingHandCursor)
+                    self.topic_checks[t["name"]] = cb
+                    row.addWidget(cb, 1)
             tf_layout.addLayout(row)
         cl.addWidget(topic_frame)
 
