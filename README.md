@@ -24,8 +24,8 @@
 
 #### 方式一：下载 EXE（推荐）
 
-1. 前往 [Releases](https://github.com/你的用户名/desktop-pet/releases) 下载最新版 `DesktopPet.zip`
-2. 解压到任意文件夹，运行 `DesktopPet.exe`
+1. 前往 [Releases](https://github.com/Egstar1/CodexPetsAPP/releases) 下载最新版 `CodexPets.zip`
+2. 解压到任意文件夹，运行 `CodexPets.exe`
 3. 首次启动会自动弹出设置向导
 
 #### 方式二：源码运行
@@ -34,8 +34,8 @@
 
 ```bash
 # 1. 克隆仓库
-git clone https://github.com/你的用户名/desktop-pet.git
-cd desktop-pet
+git clone https://github.com/Egstar1/CodexPetsAPP.git
+cd CodexPetsAPP
 
 # 2. 安装依赖
 pip install PySide6 Pillow
@@ -53,7 +53,7 @@ pip install pyinstaller
 # 运行打包脚本
 build_exe.bat
 
-# 打包后位于 dist/DesktopPet/DesktopPet.exe
+# 打包后位于 dist/CodexPets/CodexPets.exe
 ```
 
 ### 📁 目录结构
@@ -112,8 +112,8 @@ A desktop pet application built with PySide6, compatible with the [Codex Pets](h
 
 #### Option 1: Download EXE
 
-1. Go to [Releases](https://github.com/your-username/desktop-pet/releases) and download `DesktopPet.zip`
-2. Extract and run `DesktopPet.exe`
+1. Go to [Releases](https://github.com/Egstar1/CodexPetsAPP/releases) and download `CodexPets.zip`
+2. Extract and run `CodexPets.exe`
 3. The setup wizard will appear on first launch
 
 #### Option 2: Run from Source
@@ -121,8 +121,8 @@ A desktop pet application built with PySide6, compatible with the [Codex Pets](h
 Requires Python 3.9+:
 
 ```bash
-git clone https://github.com/your-username/desktop-pet.git
-cd desktop-pet
+git clone https://github.com/Egstar1/CodexPetsAPP.git
+cd CodexPetsAPP
 pip install PySide6 Pillow
 python desktop_pet.py
 ```
@@ -132,7 +132,7 @@ python desktop_pet.py
 ```bash
 pip install pyinstaller
 build_exe.bat
-# Output: dist/DesktopPet/DesktopPet.exe
+# Output: dist/CodexPets/CodexPets.exe
 ```
 
 ### 📁 Project Structure
