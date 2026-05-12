@@ -11,7 +11,7 @@ import io as io_module
 
 from PySide6.QtWidgets import (
     QApplication, QWidget, QGraphicsView, QGraphicsScene,
-    QGraphicsPixmapItem, QMenu, QDialog,
+    QGraphicsPixmapItem, QMenu, QDialog, QSystemTrayIcon,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QCheckBox,
     QLineEdit, QTextEdit, QComboBox, QScrollArea, QFrame,
     QMessageBox, QFileDialog
@@ -32,6 +32,18 @@ def _get_base_dir():
     if getattr(sys, 'frozen', False):
         return os.path.dirname(sys.executable)
     return os.path.dirname(os.path.abspath(__file__))
+
+
+def _get_search_dirs():
+    dirs = []
+    if getattr(sys, 'frozen', False):
+        dirs.append(sys._MEIPASS)
+        exe_dir = os.path.dirname(sys.executable)
+        if exe_dir != sys._MEIPASS:
+            dirs.append(exe_dir)
+    else:
+        dirs.append(os.path.dirname(os.path.abspath(__file__)))
+    return dirs
 
 
 CELL_W = 192
@@ -119,20 +131,22 @@ class PetAssets:
 
 
 def discover_pets():
-    base = _get_base_dir()
-    pets_dir = os.path.join(base, "pets")
-    if not os.path.exists(pets_dir):
-        return []
+    seen = set()
     result = []
-    for name in sorted(os.listdir(pets_dir)):
-        folder = os.path.join(pets_dir, name)
-        if os.path.isdir(folder):
-            if os.path.exists(os.path.join(folder, "pet.json")) and \
-               os.path.exists(os.path.join(folder, "spritesheet.webp")):
-                try:
-                    result.append(PetAssets(folder))
-                except Exception:
-                    pass
+    for base in _get_search_dirs():
+        pets_dir = os.path.join(base, "pets")
+        if not os.path.exists(pets_dir) or pets_dir in seen:
+            continue
+        seen.add(pets_dir)
+        for name in sorted(os.listdir(pets_dir)):
+            folder = os.path.join(pets_dir, name)
+            if os.path.isdir(folder):
+                if os.path.exists(os.path.join(folder, "pet.json")) and \
+                   os.path.exists(os.path.join(folder, "spritesheet.webp")):
+                    try:
+                        result.append(PetAssets(folder))
+                    except Exception:
+                        pass
     return result
 
 
@@ -431,9 +445,7 @@ class SetupWizard(QDialog):
                 border: 2px solid #ddd; border-radius: 8px;
                 padding: 8px 12px; font-size: 13px; background: white;
             }
-            QLineEdit:focus {
-                border-color: #4A7AFF;
-            }
+            QLineEdit:focus { border-color: #4A7AFF; }
             QLineEdit::placeholder { color: #bbb; }
             QCheckBox { spacing: 6px; font-size: 12px; color: #555; padding: 3px 2px; }
             QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px;
@@ -628,6 +640,8 @@ class PetWindow(QWidget):
         self.setStyleSheet("background: transparent;")
         self.setFixedSize(CANVAS_W, CANVAS_H)
 
+        self._tray_setup()
+
         self.scene = QGraphicsScene(self)
         self.scene.setBackgroundBrush(QBrush(QColor(0, 0, 0, 0)))
         self.view = QGraphicsView(self.scene, self)
@@ -705,9 +719,10 @@ class PetWindow(QWidget):
             GWL_EXSTYLE = -20
             WS_EX_LAYERED = 0x00080000
             WS_EX_TOOLWINDOW = 0x00000080
+            WS_EX_APPWINDOW = 0x00040000
             ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
             ex_style |= WS_EX_LAYERED
-            ex_style &= ~WS_EX_TOOLWINDOW
+            ex_style &= ~(WS_EX_TOOLWINDOW | WS_EX_APPWINDOW)
             user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style)
 
             margins = (ctypes.c_int * 4)(-1, -1, -1, -1)
@@ -716,6 +731,71 @@ class PetWindow(QWidget):
             user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0002 | 0x0004 | 0x0020 | 0x0001)
         except Exception:
             pass
+
+    def _tray_setup(self):
+        icon_path = os.path.join(_get_base_dir(), "CodexPets.png")
+        icon = QIcon(icon_path) if os.path.exists(icon_path) else QApplication.instance().windowIcon()
+        self._tray = QSystemTrayIcon(icon, self)
+        self._tray.setToolTip("CodexPets - 桌面宠物")
+
+        tray_menu = QMenu()
+        tray_menu.addAction("🐾 显示桌宠", self.show)
+        tray_menu.addSeparator()
+        tray_menu.addAction("❌ 退出", self._quit_app)
+        self._tray.setContextMenu(tray_menu)
+
+        self._tray.activated.connect(self._on_tray_activate)
+
+    def _on_tray_activate(self, reason):
+        if reason == QSystemTrayIcon.DoubleClick:
+            self.show()
+
+    def closeEvent(self, event):
+        setting = self.db.get_setting("close_behavior", "ask")
+        if setting == "tray":
+            event.ignore()
+            self.hide()
+            self._tray.show()
+            return
+        elif setting == "exit":
+            self._tray.hide()
+            event.accept()
+            return
+
+        dialog = QMessageBox()
+        dialog.setWindowTitle("🐾 桌面宠物")
+        dialog.setText("关闭桌宠后要做什么？")
+        dialog.setIcon(QMessageBox.Question)
+        dialog.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+
+        tray_btn = dialog.addButton("📦 最小化到托盘", QMessageBox.ActionRole)
+        exit_btn = dialog.addButton("❌ 关闭程序", QMessageBox.AcceptRole)
+        dialog.setDefaultButton(tray_btn)
+
+        dont_ask = QCheckBox("不再询问，记住我的选择")
+        dialog.setCheckBox(dont_ask)
+
+        dialog.exec()
+
+        remembered = None
+        if dialog.clickedButton() == tray_btn:
+            if dont_ask.isChecked():
+                remembered = "tray"
+            self._tray.show()
+            event.ignore()
+            self.hide()
+        else:
+            if dont_ask.isChecked():
+                remembered = "exit"
+            self._tray.hide()
+            event.accept()
+
+        if remembered:
+            self.db.set_setting("close_behavior", remembered)
+
+    def _quit_app(self):
+        self._tray.hide()
+        QApplication.instance().quit()
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -879,7 +959,7 @@ class PetWindow(QWidget):
         pause_text = "▶️ 恢复" if self.anim.paused else "⏸️ 暂停"
         menu.addAction(pause_text, self._toggle_pause)
         menu.addSeparator()
-        menu.addAction("❌ 退出", QApplication.instance().quit)
+        menu.addAction("❌ 退出", self._quit_app)
         menu.exec(event.globalPosition().toPoint())
 
     def _play(self, state):
@@ -1253,14 +1333,18 @@ class _UIEvent(QEvent):
 
 def main():
     app = QApplication(sys.argv)
-    app.setApplicationName("桌面宠物")
+    app.setApplicationName("CodexPets")
+
+    icon_path = os.path.join(_get_base_dir(), "CodexPets.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
 
     db = PetDatabase()
     first = db.is_first_launch()
 
     if first:
-        wizard = SetupWizard(db)
-        if wizard.exec() == QDialog.Accepted:
+        wiz = SetupWizard(db)
+        if wiz.exec() == QDialog.Accepted:
             db.set_setting("setup_complete", "1")
             db.increment_launch()
             name = db.get_user_name()
