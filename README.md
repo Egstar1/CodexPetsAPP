@@ -1,140 +1,174 @@
-<br />
+# 🐾 Desktop Pet
 
-***
+[English](#english) | [中文](#chinese)
 
-## 📋 整体演进历程
+---
 
-```
-Version 1 (tkinter 像素鲸鱼)  →  代码画角色，28×28像素
-Version 2 (tkinter 哆啦A梦)   →  矢量Canvas绘图，动作关键帧
-Version 3 (tkinter 精灵图)    →  加载Codex标准spritesheet.webp
-Version 4 (PySide6 + SQLite)  →  当前版本
-```
+## Chinese
 
-***
+一个基于 PySide6 的桌面宠物程序，兼容 [Codex Pets](https://codex-pets.net/) 精灵图生态。可自定义对话内容、在线下载宠物素材。
 
-## 🎯 新框架的核心设计亮点
+### ✨ 功能特色
 
-### 一、数据与表现分离
+| 功能 | 说明 |
+|------|------|
+| 🎨 **精灵图渲染** | 加载 Codex 标准 8×9 spritesheet.webp，支持 9 种动画状态 |
+| 🐱 **海量宠物** | 内置商店对接 codex-pets.net，**1600+** 免费宠物一键下载 |
+| 💬 **智能对话** | 按时段（早/午/晚）自动问候，支持古诗、鼓励、闲聊等多主题 |
+| 🗃️ **数据库管理** | SQLite 存储设置与对话内容，首次启动向导配置偏好 |
+| 🖱️ **交互控制** | 左键单击随机动作、双击暂停/恢复、拖拽移动、右键菜单 |
+| ⚡ **速度/缩放** | 0.25× ~ 3× 速度调节，50% ~ 200% 缩放 |
+| 🧩 **对话扩展** | 右键菜单打开编辑器，自行添加对话内容 |
 
-```
-pet_db.py          ←  数据层（SQLite）
-  ├── settings     ←  用户设置（称呼、偏好）
-  ├── topics       ←  11个主题分类
-  └── messages     ←  按主题+时段存储对话内容
+### 📦 快速开始
 
-desktop_pet.py     ←  表现层（PySide6）
-  ├── PetAssets    ←  精灵图加载器
-  ├── AnimController  ←  动画状态机
-  ├── PetWindow    ←  桌面窗口
-  ├── BubbleWidget ←  气泡渲染
-  ├── SetupWizard  ←  首次启动向导
-  ├── StoreDialog  ←  在线商店
-  └── MessageEditor ←  对话管理
-```
+#### 方式一：下载 EXE（推荐）
 
-**优势**：对话内容、主题偏好、用户设置全部存在数据库里，用户可以新增内容而无需改代码。启动时根据 `launch_count` 判断是否是首次运行。
+1. 前往 [Releases](https://github.com/你的用户名/desktop-pet/releases) 下载最新版 `DesktopPet.zip`
+2. 解压到任意文件夹，运行 `DesktopPet.exe`
+3. 首次启动会自动弹出设置向导
 
-### 二、精灵图自动帧检测（解决"消失"的第一道关口）
+#### 方式二：源码运行
 
-```python
-# 加载时自动检测每行实际帧数
-for col in range(8):
-    frame = crop(row, col)
-    non_transparent = 统计非透明像素数
-    if non_transparent >= 50:
-        real_count = col + 1   # 更新真实帧数
+需要 Python 3.9+：
 
-# 动画播放时用实际帧数
-cfg["frames"] = real_frames  # 不再是硬编码8
+```bash
+# 1. 克隆仓库
+git clone https://github.com/你的用户名/desktop-pet.git
+cd desktop-pet
+
+# 2. 安装依赖
+pip install PySide6 Pillow
+
+# 3. 启动
+python desktop_pet.py
 ```
 
-**解决了**：精灵图 idle 只有6帧、waving只有4帧，但之前写死8帧导致播放空白帧"消失"。
+#### 方式三：自行打包 EXE
 
-### 三、永不删除的渲染对象（解决"消失"的第二道关口）
+```bash
+# 安装 PyInstaller
+pip install pyinstaller
 
-```python
-# 创建一次，终身使用
-if self.pet_item is None:
-    self.pet_item = QGraphicsPixmapItem()  # 只创建一次
-    self.scene.addItem(self.pet_item)
+# 运行打包脚本
+build_exe.bat
 
-# 之后只更新内容
-self.pet_item.setPixmap(new_pixmap)  # 不删不建
-self.pet_item.setPos(x, y)
+# 打包后位于 dist/DesktopPet/DesktopPet.exe
 ```
 
-**解决了**：旧 tkinter 版 `canvas.delete("pet") → create_image` 的"先删后建"窗口期。现在**永远不删除图像对象**，只是替换内容，即使帧加载失败也保持上一帧。
-
-### 四、瞬间状态切换（解决"消失"的第三道关口）
-
-```python
-def update(self):
-    ...
-    if not cfg["loop"] and absolute_frame >= total_frames:
-        self.set_state(cfg.get("return_to", "idle"))  # 直接切，不等
-        return True
-```
-
-**解决了**：非循环动作（waving/jumping）完成后，不经过任何延迟、不绕回 frame 0，直接 `set_state("idle")` → `_last_abs = 0` → 下一渲染就是 idle 的 frame 0。从最后动作帧直接到 idle 帧 0，零帧空白。
-
-### 五、三层帧兜底
-
-```python
-pm = self._get_pixmap(row, col)       # 当前帧
-if pm is None:
-    pm = self._get_pixmap(row, 0)     # 同状态第0帧
-if pm is None:
-    pm = self._get_pixmap(idle_row, 0)  # idle第0帧
-if pm is None:
-    return  # 什么都不做，保留旧画面
-```
-
-### 六、Windows DWM 装饰消除
-
-PySide6 在 Windows 上会多出圆角阴影和半透明边框（DWM 自动添加）。通过 Win32 API 精确移除：
-
-```python
-DwmSetWindowAttribute(禁用圆角)
-DwmSetWindowAttribute(禁用过渡动画)
-SetWindowLong(清除所有窗口样式位)
-DwmExtendFrameIntoClientArea(-1)  # 消除阴影
-```
-
-### 七、关键帧→整数tick计数
+### 📁 目录结构
 
 ```
-旧版：self.frame = (self.frame + 0.064) % 8.0  
-      → 浮点累加误差导致帧长短不齐，循环时"跳一下"
-
-新版：absolute_frame = tick_count // ticks_per_frame
-      → 每帧长度完全相等，8帧x6tick=48tick一模一样的循环
+desktop-pet/
+├── desktop_pet.py         # 主程序
+├── pet_db.py              # 数据库层
+├── pets/                  # 宠物素材目录
+│   ├── mimi/             
+│   │   ├── pet.json       # 宠物元数据
+│   │   └── spritesheet.webp  # 精灵图集
+│   ├── anya/
+│   └── ...
+├── build_exe.bat          # EXE 打包脚本
+└── README.md
 ```
 
-### 八、完整的功能矩阵
+### 🌐 添加更多宠物
 
-| 功能        | 实现                                    |
-| :-------- | :------------------------------------ |
-| **精灵图加载** | Codex 标准 8×9 网格，自动检测实际帧数              |
-| **动画控制**  | 9种状态，独立FPS，循环/单次自动回退                  |
-| **窗口控制**  | 无边框置顶、可拖拽、单击/双击交互                     |
-| **在线商店**  | 对接 codex-pets.net API，1611个宠物，网格卡片+搜索 |
-| **数据库**   | SQLite 存储设置/主题/对话，首次启动向导              |
-| **对话系统**  | 按时段智能问候，11个话题分类，用户可新增内容               |
-| **气泡渲染**  | QPainter 自绘，圆角矩形+三角形尾巴+自动换行           |
-| **速度控制**  | 0.25× \~ 3× 六级调速                      |
-| **缩放**    | 50% \~ 200%                           |
-| **Log监控** | 文件变化监听，气泡弹出                           |
+**在线方式**：右键桌宠 → `🧩 桌宠拓展` → 浏览/搜索 → 点击下载
 
-***
+**手动方式**：从 [codex-pets.net](https://codex-pets.net) 或其他社区下载宠物，将 `pet.json` + `spritesheet.webp` 放入 `pets/宠物名/` 目录。
 
-## 🔍 "消失"问题的解决总结
+### 🗣️ 对话管理
 
-| 原因                   | 解决方案                         | 影响程度                      |
-| :------------------- | :--------------------------- | :------------------------ |
-| **精灵图帧6写死8**         | 自动检测非透明像素确定真实帧数              | 最大——所有宠物、所有状态的周期性消失       |
-| **delete→create窗口期** | 改为永久图像对象+itemconfig更新        | 第二——偶发的中间态空白              |
-| **非循环动画绕回frame0**    | 完成时直接set\_state(idle)，不经过模运算 | 第三——waving/jumping结束时短暂消失 |
-| **浮点帧推进不均匀**         | 整数tick计数，帧长严格相等              | 第四——循环末端的微小跳动             |
-| **render先删后绘**       | 加载成功后才删旧图画新图                 | 第五——叠加风险                  |
+右键桌宠 → `📝 管理对话` → 选择分类和时段 → 输入内容 → 添加
 
+程序按以下时段自动发送对应消息：`早晨(5-8)` → `上午(8-10)` → `饭前(10-12)` → `午饭(12-13)` → `下午(13-17)` → `傍晚(17-19)` → `夜晚(19+)`
+
+### 🔧 依赖
+
+- Python 3.9+
+- PySide6 ≥ 6.5
+- Pillow ≥ 10.0
+
+---
+
+## English
+
+A desktop pet application built with PySide6, compatible with the [Codex Pets](https://codex-pets.net/) sprite ecosystem. Features customizable conversations and an online pet store.
+
+### ✨ Features
+
+| Feature | Description |
+|---------|-------------|
+| 🎨 **Sprite Rendering** | Loads Codex standard 8×9 spritesheet.webp with 9 animation states |
+| 🐱 **Pet Store** | Built-in store with **1600+** free pets from codex-pets.net |
+| 💬 **Smart Chat** | Time-aware greetings, poems, encouragement, pet talk & more |
+| 🗃️ **Database** | SQLite-powered settings & conversations, first-launch wizard |
+| 🖱️ **Controls** | Click for random action, double-click pause, drag to move, right-click menu |
+| ⚡ **Speed/Zoom** | 0.25× ~ 3× speed control, 50% ~ 200% scale |
+| 🧩 **Message Editor** | Add your own conversation topics and messages |
+
+### 📦 Quick Start
+
+#### Option 1: Download EXE
+
+1. Go to [Releases](https://github.com/your-username/desktop-pet/releases) and download `DesktopPet.zip`
+2. Extract and run `DesktopPet.exe`
+3. The setup wizard will appear on first launch
+
+#### Option 2: Run from Source
+
+Requires Python 3.9+:
+
+```bash
+git clone https://github.com/your-username/desktop-pet.git
+cd desktop-pet
+pip install PySide6 Pillow
+python desktop_pet.py
+```
+
+#### Option 3: Build EXE
+
+```bash
+pip install pyinstaller
+build_exe.bat
+# Output: dist/DesktopPet/DesktopPet.exe
+```
+
+### 📁 Project Structure
+
+```
+desktop-pet/
+├── desktop_pet.py         # Main application
+├── pet_db.py              # Database layer
+├── pets/                  # Pet assets directory
+│   ├── mimi/             
+│   │   ├── pet.json       # Pet metadata
+│   │   └── spritesheet.webp  # Sprite sheet
+│   ├── anya/
+│   └── ...
+├── build_exe.bat          # EXE build script
+└── README.md
+```
+
+### 🌐 Adding More Pets
+
+**Online**: Right-click pet → `🧩 Pet Store` → Browse/Search → Download
+
+**Manual**: Download pets from [codex-pets.net](https://codex-pets.net), place `pet.json` + `spritesheet.webp` into `pets/pet_name/` folder.
+
+### 🗣️ Managing Conversations
+
+Right-click pet → `📝 Manage Messages` → Select topic and time period → Input content → Add
+
+Messages auto-send by time: `Morning(5-8)` → `Forenoon(8-10)` → `Pre-lunch(10-12)` → `Lunch(12-13)` → `Afternoon(13-17)` → `Evening(17-19)` → `Night(19+)`
+
+### 🔧 Dependencies
+
+- Python 3.9+
+- PySide6 ≥ 6.5
+- Pillow ≥ 10.0
+
+### 📄 License
+
+MIT License
