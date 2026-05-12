@@ -2,8 +2,14 @@ import sqlite3
 import os
 import json
 import time
+import sys
 
-DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pet_data.db")
+def get_db_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+DB_PATH = os.path.join(get_db_dir(), "pet_data.db")
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS settings (

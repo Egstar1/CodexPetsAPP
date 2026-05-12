@@ -27,6 +27,13 @@ from PIL import Image
 
 from pet_db import PetDatabase, INITIAL_MESSAGES
 
+
+def _get_base_dir():
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
 CELL_W = 192
 CELL_H = 208
 COLS = 8
@@ -112,7 +119,7 @@ class PetAssets:
 
 
 def discover_pets():
-    base = os.path.dirname(os.path.abspath(__file__))
+    base = _get_base_dir()
     pets_dir = os.path.join(base, "pets")
     if not os.path.exists(pets_dir):
         return []
@@ -337,103 +344,205 @@ class SetupWizard(QDialog):
     def __init__(self, db, parent=None):
         super().__init__(parent)
         self.db = db
-        self.setWindowTitle("🐾 初次见面")
-        self.setFixedSize(500, 450)
+        self._hue = 0
+        self._drag_pos = QPoint()
+        self.setWindowTitle("")
+        self.setFixedSize(540, 480)
         self.setWindowFlags(Qt.Dialog | Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
         self._setup_ui()
+        self._start_bg_anim()
+
+    def _start_bg_anim(self):
+        self._bg_timer = QTimer(self)
+        self._bg_timer.timeout.connect(self._tick_bg)
+        self._bg_timer.start(50)
+
+    def _tick_bg(self):
+        self._hue = (self._hue + 0.3) % 360
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing)
+
+        r, g, b = self._hsl_to_rgb(self._hue, 65, 88)
+        base = QColor(int(r), int(g), int(b))
+
+        p.fillRect(self.rect(), base)
+
+        s = 40
+        p.setPen(QPen(QColor(255, 255, 255, 8), 1))
+        for y in range(-s, self.height() + s, s):
+            for x in range(-s, self.width() + s, s):
+                path = QPolygonF()
+                path.append(QPointF(x, y + s // 2))
+                path.append(QPointF(x + s // 2, y))
+                path.append(QPointF(x + s, y + s // 2))
+                path.append(QPointF(x + s // 2, y + s))
+                path.append(QPointF(x, y + s // 2))
+                p.drawPolygon(path)
+
+        p.fillRect(self.rect(), QColor(255, 255, 255, 180))
+        p.end()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self._drag_pos)
+            event.accept()
+
+    def _hsl_to_rgb(self, h, s, l):
+        s /= 100.0; l /= 100.0
+        c = (1 - abs(2 * l - 1)) * s
+        x = c * (1 - abs((h / 60) % 2 - 1))
+        m = l - c / 2
+        if h < 60: r, g, b = c, x, 0
+        elif h < 120: r, g, b = x, c, 0
+        elif h < 180: r, g, b = 0, c, x
+        elif h < 240: r, g, b = 0, x, c
+        elif h < 300: r, g, b = x, 0, c
+        else: r, g, b = c, 0, x
+        return (r + m) * 255, (g + m) * 255, (b + m) * 255
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        screen = QApplication.primaryScreen()
+        if screen:
+            sg = screen.availableGeometry()
+            self.move((sg.width() - self.width()) // 2 + sg.x(),
+                      (sg.height() - self.height()) // 2 + sg.y())
 
     def _setup_ui(self):
-        main = QVBoxLayout(self)
-        main.setContentsMargins(20, 20, 20, 20)
-
         card = QFrame(self)
+        card.setObjectName("wizardCard")
         card.setStyleSheet("""
-            QFrame { background: white; border-radius: 15px; }
-            QLabel { color: #333; }
-            QPushButton { background: #4A7AFF; color: white; border: none;
-                         border-radius: 8px; padding: 10px 25px; font-size: 14px; }
-            QPushButton:hover { background: #3B6BE8; }
-            QPushButton:disabled { background: #ccc; }
-            QCheckBox { spacing: 8px; font-size: 13px; color: #333; }
-            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px;
-                                  border: 2px solid #aaa; }
+            QFrame#wizardCard {
+                background: rgba(255,255,255,0.85);
+                border-radius: 18px;
+            }
+            QLabel { color: #444; }
+            QLineEdit {
+                border: 2px solid #ddd; border-radius: 8px;
+                padding: 8px 12px; font-size: 13px; background: white;
+            }
+            QLineEdit:focus {
+                border-color: #4A7AFF;
+            }
+            QLineEdit::placeholder { color: #bbb; }
+            QCheckBox { spacing: 6px; font-size: 12px; color: #555; padding: 3px 2px; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 5px;
+                                  border: 2px solid #ccc; background: white; }
+            QCheckBox::indicator:hover { border-color: #4A7AFF; }
             QCheckBox::indicator:checked { background: #4A7AFF; border-color: #4A7AFF; }
-            QLineEdit { border: 2px solid #ddd; border-radius: 8px; padding: 8px 12px;
-                       font-size: 14px; }
+            QPushButton {
+                background: #4A7AFF; color: white; border: none;
+                border-radius: 8px; padding: 10px;
+                font-size: 14px; font-weight: bold;
+            }
+            QPushButton:hover { background: #3B6BE8; }
         """)
-        layout = QVBoxLayout(card)
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(24, 6, 24, 20)
+        cl.setSpacing(8)
 
-        self.step = 0
-        self.stack = QVBoxLayout()
+        title_bar = QHBoxLayout()
+        title_bar.setContentsMargins(0, 0, 0, 0)
+        title_bar.addStretch()
+        for text, action in [("─", self.showMinimized), ("✕", self.close)]:
+            btn = QPushButton(text)
+            btn.setFixedSize(28, 24)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet(f"""
+                QPushButton {{ background: transparent; color: #aaa;
+                             border: none; border-radius: 4px; font-size: 14px; padding: 0; }}
+                QPushButton:hover {{ background: {"#E53935" if text == "✕" else "#eee"};
+                                    color: {"white" if text == "✕" else "#333"}; }}
+            """)
+            btn.clicked.connect(action)
+            title_bar.addWidget(btn)
+        cl.addLayout(title_bar)
 
-        self.step1_widget = QWidget()
-        s1 = QVBoxLayout(self.step1_widget)
-        s1.addStretch()
-        s1.addWidget(QLabel("🐾"), alignment=Qt.AlignCenter)
-        title = QLabel("你好！我是你的桌面小伙伴~")
-        title.setStyleSheet("font-size: 20px; font-weight: bold;")
-        s1.addWidget(title, alignment=Qt.AlignCenter)
-        s1.addSpacing(10)
+        title = QLabel("🐾  初次见面~")
+        title.setStyleSheet("font-size: 22px; font-weight: bold; color: #333; background: transparent;")
+        title.setAlignment(Qt.AlignCenter)
+        cl.addWidget(title)
+
+        sub = QLabel("我是你的桌面小伙伴，先认识一下吧！")
+        sub.setStyleSheet("font-size: 12px; color: #999; background: transparent;")
+        sub.setAlignment(Qt.AlignCenter)
+        cl.addWidget(sub)
+
+        name_label = QLabel("💬  你希望我怎么称呼你？")
+        name_label.setStyleSheet("font-size: 12px; color: #888; margin-top: 4px; background: transparent;")
+        cl.addWidget(name_label)
+
         self.name_input = QLineEdit()
-        self.name_input.setPlaceholderText("你希望我怎么称呼你？（输入你的名字或昵称）")
+        self.name_input.setPlaceholderText("输入你的名字或昵称...")
         self.name_input.setMaxLength(20)
-        s1.addWidget(self.name_input)
-        s1.addSpacing(10)
-        self.next_btn1 = QPushButton("下一步 →")
-        self.next_btn1.clicked.connect(self._next_step)
-        s1.addWidget(self.next_btn1, alignment=Qt.AlignCenter)
-        s1.addStretch()
-        self.stack.addWidget(self.step1_widget)
+        cl.addWidget(self.name_input)
 
-        self.step2_widget = QWidget()
-        s2 = QVBoxLayout(self.step2_widget)
-        s2.addStretch()
-        title2 = QLabel("你对哪些话题感兴趣呢？")
-        title2.setStyleSheet("font-size: 18px; font-weight: bold;")
-        s2.addWidget(title2, alignment=Qt.AlignCenter)
-        s2.addSpacing(10)
-        desc2 = QLabel("桌宠会随机挑选你喜欢的领域和你聊天~（可多选）")
-        desc2.setStyleSheet("font-size: 12px; color: #888;")
-        desc2.setWordWrap(True)
-        s2.addWidget(desc2, alignment=Qt.AlignCenter)
-        s2.addSpacing(10)
+        topic_label = QLabel("🎯  选择感兴趣的话题：")
+        topic_label.setStyleSheet("font-size: 12px; color: #888; margin-top: 4px; background: transparent;")
+        cl.addWidget(topic_label)
 
-        topics_grid = QHBoxLayout()
+        topic_frame = QFrame()
+        topic_frame.setStyleSheet("background: rgba(245,245,245,0.6); border-radius: 10px;")
+        tf_layout = QVBoxLayout(topic_frame)
+        tf_layout.setContentsMargins(12, 10, 12, 10)
+        tf_layout.setSpacing(4)
+
         self.topic_checks = {}
         all_topics = self.db.get_topics()
-        col1 = QVBoxLayout()
-        col2 = QVBoxLayout()
-        for i, t in enumerate(all_topics):
-            cb = QCheckBox(t["display_name"])
-            cb.setChecked(bool(t["enabled"]))
-            self.topic_checks[t["name"]] = cb
-            (col1 if i % 2 == 0 else col2).addWidget(cb)
-        topics_grid.addLayout(col1)
-        topics_grid.addLayout(col2)
-        s2.addLayout(topics_grid)
-        s2.addSpacing(10)
-        self.finish_btn = QPushButton("✨ 开始！")
-        self.finish_btn.clicked.connect(self._finish)
-        s2.addWidget(self.finish_btn, alignment=Qt.AlignCenter)
-        s2.addStretch()
-        self.stack.addWidget(self.step2_widget)
+        for i in range(0, len(all_topics), 3):
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            for j in range(3):
+                idx = i + j
+                if idx >= len(all_topics):
+                    row.addStretch()
+                    break
+                t = all_topics[idx]
+                cb = QCheckBox(t["display_name"])
+                cb.setChecked(bool(t["enabled"]))
+                cb.setCursor(Qt.PointingHandCursor)
+                self.topic_checks[t["name"]] = cb
+                row.addWidget(cb, 1)
+            tf_layout.addLayout(row)
+        cl.addWidget(topic_frame)
 
-        layout.addLayout(self.stack)
+        self.finish_btn = QPushButton("✨  开始！")
+        self.finish_btn.setCursor(Qt.PointingHandCursor)
+        self.finish_btn.clicked.connect(self._finish)
+        self.finish_btn.setStyleSheet("""
+            QPushButton { background: #4A7AFF; color: white; border: none;
+                         border-radius: 8px; padding: 12px;
+                         font-size: 15px; font-weight: bold; }
+            QPushButton:hover { background: #3B6BE8; }
+        """)
+        cl.addWidget(self.finish_btn)
+
+        main = QVBoxLayout(self)
+        main.setContentsMargins(25, 25, 25, 25)
         main.addWidget(card)
 
-    def _next_step(self):
+    def _finish(self):
         name = self.name_input.text().strip()
         if not name:
-            self.name_input.setStyleSheet("border: 2px solid red; border-radius: 8px; padding: 8px 12px;")
+            self.name_input.setStyleSheet("""
+                border: 2px solid #E53935;
+                border-radius: 8px; padding: 8px 12px;
+                font-size: 13px; background: #fff5f5;
+            """)
+            self.name_input.setPlaceholderText("请告诉我你的名字~")
             return
         self.db.set_user_name(name)
-        self.step1_widget.hide()
-        self.step2_widget.show()
-        self.adjustSize()
-
-    def _finish(self):
-        enabled = [name for name, cb in self.topic_checks.items() if cb.isChecked()]
+        enabled = [n for n, cb in self.topic_checks.items() if cb.isChecked()]
         self.db.set_topics_enabled(enabled)
         self.accept()
 
@@ -990,7 +1099,7 @@ class StoreDialog(QDialog):
             self.grid_layout.addWidget(lbl, 0, 0, 1, 4)
             return
 
-        base = os.path.join(os.path.dirname(os.path.abspath(__file__)), "pets")
+        base = os.path.join(_get_base_dir(), "pets")
         for i, pet in enumerate(filtered):
             card = self._make_card(pet, base)
             self.grid_layout.addWidget(card, i // 4, i % 4)
