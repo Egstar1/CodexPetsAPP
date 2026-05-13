@@ -14,14 +14,15 @@ from PySide6.QtWidgets import (
     QGraphicsPixmapItem, QMenu, QDialog, QSystemTrayIcon,
     QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton, QCheckBox,
     QLineEdit, QTextEdit, QComboBox, QScrollArea, QFrame,
-    QMessageBox, QFileDialog
+    QMessageBox, QFileDialog, QStackedWidget
 )
 from PySide6.QtCore import (
     Qt, QTimer, QPoint, QSize, QEvent, QPointF
 )
 from PySide6.QtGui import (
     QPixmap, QImage, QIcon, QAction, QPainter,
-    QFont, QColor, QBrush, QPen, QPolygonF
+    QFont, QColor, QBrush, QPen, QPolygonF,
+    QPainterPath
 )
 from PIL import Image
 
@@ -294,30 +295,25 @@ class BubbleWidget(QWidget):
 
         pad_x, pad_y = 14, 8
         max_allowed = min(BUBBLE_MAX_W, self.width() - pad_x * 2 - 10)
-        words = self._text.replace("\n", " \n ").split(" ")
+        raw = self._text
         wrapped = []
-        current = ""
-        for w in words:
-            if w == "\n":
-                if current:
-                    wrapped.append(current.strip())
-                    current = ""
-                continue
-            test = (current + " " + w).strip()
-            if fm.horizontalAdvance(test) > max_allowed:
-                if current:
-                    wrapped.append(current.strip())
-                current = w
-            else:
-                current = test
-        if current.strip():
-            wrapped.append(current.strip())
+        for paragraph in raw.split("\n"):
+            chars = list(paragraph)
+            i = 0
+            while i < len(chars):
+                j = i + 1
+                while j <= len(chars):
+                    if fm.horizontalAdvance("".join(chars[i:j])) > max_allowed:
+                        break
+                    j += 1
+                wrapped.append("".join(chars[i:j-1]) if j > i + 1 else chars[i])
+                i = j - 1
         wrapped = wrapped[-5:]
 
         line_h = fm.height() + 4
         max_line_w = max(fm.horizontalAdvance(line) for line in wrapped) if wrapped else 0
         bw = min(max(max_line_w + pad_x * 2, 60), max_allowed + pad_x * 2)
-        bh = len(wrapped) * line_h + pad_y * 2
+        bh = len(wrapped) * line_h + pad_y * 2 + 4
         cx = self.width() // 2
 
         bubble_top = 65 - bh
@@ -331,13 +327,23 @@ class BubbleWidget(QWidget):
         if bx1 + bw > self.width() - 5:
             bx1 = self.width() - 5 - bw
 
-        p.setPen(QPen(QColor("#888888"), 1))
-        p.setBrush(QBrush(QColor("#FFFFFF")))
-        p.drawRoundedRect(bx1, bubble_top, bw, bh, r, r)
+        path = QPainterPath()
+        path.addRoundedRect(bx1, bubble_top, bw, bh, r, r)
 
-        tail = [cx - 6, bubble_top + bh, cx + 6, bubble_top + bh, cx, bubble_top + bh + 8]
-        path = self._create_triangle(tail)
-        p.drawPolygon(path)
+        tx, ty = cx, bubble_top + bh
+        tri = QPolygonF()
+        tri.append(QPointF(tx - 6, ty))
+        tri.append(QPointF(tx + 6, ty))
+        tri.append(QPointF(tx, ty + 8))
+        path.addPolygon(tri)
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(QColor("#FFFFFF")))
+        p.drawPath(path)
+
+        p.setPen(QColor("#dddddd"))
+        p.setBrush(Qt.NoBrush)
+        p.drawPath(path)
 
         p.setPen(QColor("#333333"))
         text_x = bx1 + pad_x
@@ -346,13 +352,6 @@ class BubbleWidget(QWidget):
             p.drawText(text_x, text_y, line)
             text_y += line_h
         p.end()
-
-    def _create_triangle(self, pts):
-        poly = QPolygonF()
-        for i in range(0, len(pts), 2):
-            poly.append(QPointF(pts[i], pts[i + 1]))
-        return poly
-
 
 class SetupWizard(QDialog):
     def __init__(self, db, parent=None):
@@ -876,6 +875,12 @@ class PetWindow(QWidget):
         self.photo_cache = {}
         self.pets = discover_pets()
         self.current_pet_index = 0
+        saved_id = self.db.get_setting("current_pet", "")
+        if saved_id and self.pets:
+            for i, p in enumerate(self.pets):
+                if p.id == saved_id:
+                    self.current_pet_index = i
+                    break
         self.assets = None
         self._drag_pos = QPoint()
         self._was_dragging = False
@@ -885,7 +890,7 @@ class PetWindow(QWidget):
         self._click_timer.timeout.connect(self._single_click)
 
         if self.pets:
-            self._load_pet(0)
+            self._load_pet(self.current_pet_index)
 
         self._random_timer = QTimer(self)
         self._random_timer.timeout.connect(self._do_random)
@@ -1188,6 +1193,8 @@ class PetWindow(QWidget):
             self._random_timer.stop()
         self._load_pet(index)
         self._schedule_random()
+        if self.assets:
+            self.db.set_setting("current_pet", self.assets.id)
 
     def _set_scale(self, sc):
         if abs(self.scale - sc) < 0.01:
@@ -1311,24 +1318,273 @@ class StoreDialog(QDialog):
         super().__init__(parent)
         self.db = db
         self.setWindowTitle("🧩 桌宠拓展")
-        self.setFixedSize(750, 600)
+        self.setFixedSize(780, 620)
+        self.setStyleSheet("""
+            StoreDialog { background: #f0f2f5; }
+        """)
         self._page = 1
         self._total_pages = 1
         self._all_pets_data = []
-        self.setStyleSheet("""
-            QDialog { background: #f0f2f5; }
-        """)
         self._setup_ui()
 
     def _setup_ui(self):
-        main = QVBoxLayout(self)
-        main.setContentsMargins(12, 12, 12, 12)
-        main.setSpacing(8)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
         header = QLabel("🧩 桌宠拓展")
-        header.setStyleSheet("font-size: 18px; font-weight: bold; color: #333; padding: 4px;")
+        header.setStyleSheet("""
+            font-size: 18px; font-weight: bold; color: white;
+            background: #6c5ce7; padding: 16px 24px;
+        """)
         header.setAlignment(Qt.AlignCenter)
-        main.addWidget(header)
+        root.addWidget(header)
+
+        tab_bar = QFrame()
+        tab_bar.setStyleSheet("QFrame { background: white; border-bottom: 1px solid #e0e3eb; }")
+        tab_layout = QHBoxLayout(tab_bar)
+        tab_layout.setContentsMargins(0, 0, 0, 0)
+        tab_layout.setSpacing(0)
+
+        self._tabs = {}
+        for key, label in [("installed", "📦 已安装"), ("official", "🏪 Codex-Pets 社区"), ("petdex", "🌐 Petdex 社区")]:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setFixedHeight(40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: transparent; border: none;
+                    padding: 0 28px; font-size: 14px; color: #888;
+                    border-bottom: 3px solid transparent;
+                }
+                QPushButton:checked {
+                    color: #6c5ce7; font-weight: 600;
+                    border-bottom: 3px solid #6c5ce7;
+                }
+                QPushButton:hover { color: #6c5ce7; }
+            """)
+            btn.clicked.connect(lambda checked, k=key: self._switch_tab(k))
+            tab_layout.addWidget(btn)
+            self._tabs[key] = btn
+        tab_layout.addStretch()
+        root.addWidget(tab_bar)
+
+        self._tab_content = QStackedWidget()
+        root.addWidget(self._tab_content, 1)
+
+        self._init_installed_tab()
+        self._init_official_tab()
+        self._init_petdex_tab()
+        self._tabs["installed"].setChecked(True)
+
+    def _switch_tab(self, key):
+        for k, btn in self._tabs.items():
+            btn.setChecked(k == key)
+        idx = list(self._tabs.keys()).index(key)
+        self._tab_content.setCurrentIndex(idx)
+        if key == "installed":
+            self._refresh_installed()
+        elif key == "official" and not self._all_pets_data:
+            self._load_page(0)
+        elif key == "petdex":
+            self._load_petdex_source()
+
+    # ────────────── Installed Tab ──────────────
+
+    def _init_installed_tab(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        info = QLabel("已安装到本地的桌宠，可在此管理和删除")
+        info.setStyleSheet("color: #666; font-size: 12px; padding: 2px 0;")
+        layout.addWidget(info)
+
+        self.inst_status = QLabel("")
+        self.inst_status.setStyleSheet("color: #888; font-size: 12px;")
+        layout.addWidget(self.inst_status)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { width: 6px; background: #eee; border-radius: 3px; }
+            QScrollBar::handle:vertical { background: #ccc; border-radius: 3px; }
+            QScrollBar::handle:vertical:hover { background: #aaa; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        self.inst_grid = QWidget()
+        self.inst_grid.setStyleSheet("background: transparent;")
+        self.inst_layout = QGridLayout(self.inst_grid)
+        self.inst_layout.setSpacing(8)
+        self.inst_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(self.inst_grid)
+        layout.addWidget(scroll, 1)
+
+        btn_row = QHBoxLayout()
+        btn_row.addStretch()
+        refresh_btn = QPushButton("🔄 刷新")
+        refresh_btn.setStyleSheet("""
+            QPushButton { background: #6c5ce7; color: white; border: none;
+                        padding: 6px 18px; border-radius: 6px; font-size: 12px; }
+            QPushButton:hover { background: #5a4bd1; }
+        """)
+        refresh_btn.clicked.connect(self._refresh_installed)
+        btn_row.addWidget(refresh_btn)
+        layout.addLayout(btn_row)
+
+        self._tab_content.addWidget(container)
+
+    def _refresh_installed(self):
+        for i in reversed(range(self.inst_layout.count())):
+            item = self.inst_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        base = os.path.join(_get_base_dir(), "pets")
+        if not os.path.exists(base):
+            lbl = QLabel("未找到 pets 目录")
+            lbl.setStyleSheet("color: #aaa; font-size: 13px; padding: 40px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            self.inst_layout.addWidget(lbl, 0, 0, 1, 4)
+            self.inst_status.setText("未安装任何桌宠")
+            return
+
+        entries = []
+        for name in sorted(os.listdir(base)):
+            folder = os.path.join(base, name)
+            json_path = os.path.join(folder, "pet.json")
+            webp_path = os.path.join(folder, "spritesheet.webp")
+            if os.path.isdir(folder) and os.path.exists(json_path) and os.path.exists(webp_path):
+                try:
+                    with open(json_path, "r", encoding="utf-8") as f:
+                        meta = json.load(f)
+                    entries.append({
+                        "id": meta.get("id", name),
+                        "displayName": meta.get("displayName") or meta.get("name", name),
+                        "description": meta.get("description", ""),
+                        "folder": folder,
+                        "json_path": json_path,
+                        "webp_path": webp_path
+                    })
+                except Exception:
+                    entries.append({
+                        "id": name,
+                        "displayName": name,
+                        "description": "",
+                        "folder": folder,
+                        "json_path": json_path,
+                        "webp_path": webp_path
+                    })
+
+        if not entries:
+            lbl = QLabel("还没有安装任何桌宠，去商店看看吧 🎉")
+            lbl.setStyleSheet("color: #aaa; font-size: 13px; padding: 40px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            self.inst_layout.addWidget(lbl, 0, 0, 1, 4)
+            self.inst_status.setText("未安装任何桌宠")
+            return
+
+        self.inst_status.setText(f"共 {len(entries)} 个桌宠")
+        base_dir = os.path.join(_get_base_dir(), "pets")
+        for i, pet in enumerate(entries):
+            card = self._make_installed_card(pet, base_dir)
+            self.inst_layout.addWidget(card, i // 4, i % 4)
+
+    def _make_installed_card(self, pet, base_dir):
+        pid = pet["id"]
+        name = pet["displayName"]
+        desc = pet.get("description", "")
+
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame { background: white; border-radius: 10px; padding: 8px; }
+            QFrame:hover { background: #f8f9ff; }
+        """)
+        card.setFixedSize(170, 210)
+
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(6, 6, 6, 6)
+        cl.setSpacing(3)
+
+        preview = QLabel()
+        preview.setFixedSize(110, 120)
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setStyleSheet("background: #f5f5f5; border-radius: 6px;")
+        cl.addWidget(preview, alignment=Qt.AlignCenter)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        name_lbl.setWordWrap(True)
+        cl.addWidget(name_lbl)
+
+        if desc:
+            d = desc if len(desc) <= 30 else desc[:28] + "..."
+            desc_lbl = QLabel(d)
+            desc_lbl.setStyleSheet("color: #999; font-size: 10px;")
+            desc_lbl.setAlignment(Qt.AlignCenter)
+            cl.addWidget(desc_lbl)
+
+        cl.addStretch()
+
+        del_btn = QPushButton("🗑 删除")
+        del_btn.setStyleSheet("""
+            QPushButton { background: #ff6b6b; color: white; border: none;
+                        padding: 5px; border-radius: 5px; font-size: 11px; }
+            QPushButton:hover { background: #e05555; }
+        """)
+        del_btn.clicked.connect(lambda checked, p=pid, n=name: self._delete_installed(p, n))
+        cl.addWidget(del_btn)
+
+        try:
+            sheet = Image.open(pet["webp_path"]).convert("RGBA")
+            cw, ch = sheet.width // 8, sheet.height // 9
+            frame = sheet.crop((0, 0, cw, ch)).resize((110, 120), Image.NEAREST)
+            qimg = QImage(frame.tobytes(), 110, 120, QImage.Format_RGBA8888)
+            pm = QPixmap.fromImage(qimg)
+            preview.setPixmap(pm)
+            preview.setFixedSize(110, 120)
+        except Exception:
+            pass
+
+        return card
+
+    def _delete_installed(self, pid, name):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认删除")
+        msg.setText(f"确定要删除桌宠「{name}」吗？\n删除后需要重新下载才能使用。")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        msg.setStyleSheet("""
+            QMessageBox { background: white; }
+            QLabel { color: #333; font-size: 13px; }
+            QPushButton { padding: 6px 20px; border-radius: 4px; }
+        """)
+        reply = msg.exec()
+        if reply != QMessageBox.Yes:
+            return
+
+        pet_folder = os.path.join(_get_base_dir(), "pets", pid)
+        try:
+            import shutil
+            shutil.rmtree(pet_folder)
+            self._refresh_installed()
+            self._pd_filter()
+            if isinstance(self.parent(), PetWindow):
+                self.parent()._refresh_pets()
+        except Exception as e:
+            QMessageBox.warning(self, "删除失败", f"删除「{name}」失败：{str(e)}")
+
+    # ────────────── Official Tab (existing) ──────────────
+
+    def _init_official_tab(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
 
         search_row = QHBoxLayout()
         self.search_input = QLineEdit()
@@ -1345,7 +1601,7 @@ class StoreDialog(QDialog):
         self.status.setStyleSheet("color: #888; font-size: 12px;")
         self.status.setFixedWidth(200)
         search_row.addWidget(self.status)
-        main.addLayout(search_row)
+        layout.addLayout(search_row)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -1362,7 +1618,7 @@ class StoreDialog(QDialog):
         self.grid_layout.setSpacing(8)
         self.grid_layout.setContentsMargins(0, 0, 0, 0)
         scroll.setWidget(self.grid_widget)
-        main.addWidget(scroll, 1)
+        layout.addWidget(scroll, 1)
 
         nav = QHBoxLayout()
         nav.setSpacing(8)
@@ -1381,9 +1637,9 @@ class StoreDialog(QDialog):
             btn.clicked.connect(lambda checked, d=delta: self._load_page(d))
             nav.addWidget(btn)
             setattr(self, "_nav_" + ("prev" if delta < 0 else "next"), btn)
-        main.addLayout(nav)
+        layout.addLayout(nav)
 
-        self._load_page(0)
+        self._tab_content.addWidget(container)
 
     def _on_search(self, text):
         self._filter_display()
@@ -1413,10 +1669,399 @@ class StoreDialog(QDialog):
 
         base = os.path.join(_get_base_dir(), "pets")
         for i, pet in enumerate(filtered):
-            card = self._make_card(pet, base)
+            card = self._make_card(pet, base, "official")
             self.grid_layout.addWidget(card, i // 4, i % 4)
 
-    def _make_card(self, pet, base_dir):
+    # ────────────── Community Tab (Petdex) ──────────────
+
+    def _init_petdex_tab(self):
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(8)
+
+        hint = QLabel("💡 前往 petdex.crafter.run 找到喜欢的桌宠，记住名称后来此搜索下载")
+        hint.setStyleSheet("color: #6c5ce7; font-size: 12px; padding: 4px 8px; "
+                          "background: #f0edff; border-radius: 6px;")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.pd_refresh_btn = QPushButton("🔄 加载 Petdex 图库")
+        self.pd_refresh_btn.setStyleSheet("""
+            QPushButton { background: #6c5ce7; color: white; border: none;
+                        padding: 6px 18px; border-radius: 6px; font-size: 13px; }
+            QPushButton:hover { background: #5a4bd1; }
+            QPushButton:disabled { background: #ccc; }
+        """)
+        self.pd_refresh_btn.clicked.connect(self._load_petdex_source)
+        layout.addWidget(self.pd_refresh_btn, alignment=Qt.AlignCenter)
+
+        search_row = QHBoxLayout()
+        self.pd_search = QLineEdit()
+        self.pd_search.setPlaceholderText("🔍 输入宠物名称或 ID 搜索...")
+        self.pd_search.setStyleSheet("""
+            QLineEdit { border: 2px solid #ddd; border-radius: 8px;
+                       padding: 7px 12px; font-size: 13px; background: white; }
+            QLineEdit:focus { border-color: #6c5ce7; }
+        """)
+        self.pd_search.textChanged.connect(self._pd_filter)
+        search_row.addWidget(self.pd_search)
+
+        self.pd_status = QLabel("")
+        self.pd_status.setStyleSheet("color: #888; font-size: 12px;")
+        self.pd_status.setFixedWidth(200)
+        search_row.addWidget(self.pd_status)
+        layout.addLayout(search_row)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical { width: 6px; background: #eee; border-radius: 3px; }
+            QScrollBar::handle:vertical { background: #ccc; border-radius: 3px; }
+            QScrollBar::handle:vertical:hover { background: #aaa; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+        """)
+        self.pd_grid = QWidget()
+        self.pd_grid.setStyleSheet("background: transparent;")
+        self.pd_layout = QGridLayout(self.pd_grid)
+        self.pd_layout.setSpacing(8)
+        self.pd_layout.setContentsMargins(0, 0, 0, 0)
+        scroll.setWidget(self.pd_grid)
+        layout.addWidget(scroll, 1)
+
+        nav_row = QHBoxLayout()
+        self.pd_info = QLabel("")
+        self.pd_info.setStyleSheet("color: #888; font-size: 12px;")
+        nav_row.addWidget(self.pd_info)
+        nav_row.addStretch()
+        layout.addLayout(nav_row)
+
+        self._tab_content.addWidget(container)
+        self._pd_all = []
+        self._pd_filtered = []
+
+    def _load_petdex_source(self):
+        self.pd_status.setText("正在从 Petdex 加载图库...")
+        self.pd_refresh_btn.setEnabled(False)
+        self._pd_all = []
+        self._pd_filter()
+
+        def fetch():
+            import re as _re
+            try:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+
+                req = urllib.request.Request(
+                    "https://petdex.crafter.run/zh",
+                    headers={"User-Agent": "Mozilla/5.0"}
+                )
+                resp = urllib.request.urlopen(req, context=ctx, timeout=10)
+                html = resp.read().decode("utf-8")
+
+                slugs = set()
+                for pattern in [r'href="/zh/pets/([^/"\?]+)"', r'href="/pets/([^/"\?]+)"']:
+                    for m in _re.finditer(pattern, html):
+                        slugs.add(m.group(1))
+
+                entries = []
+                for slug in sorted(slugs):
+                    name = slug
+                    desc = ""
+                    try:
+                        jurl = f"https://pub-94495283df974cfea5e98d6a9e3fa462.r2.dev/curated/{slug}/pet.json"
+                        jreq = urllib.request.Request(jurl, headers={"User-Agent": "Mozilla/5.0"})
+                        jresp = urllib.request.urlopen(jreq, context=ctx, timeout=3)
+                        meta = json.loads(jresp.read())
+                        name = meta.get("displayName", slug)
+                        desc = meta.get("description", "")
+                    except Exception:
+                        pass
+                    entries.append({
+                        "id": slug,
+                        "displayName": name,
+                        "description": desc or "Petdex 社区宠物",
+                        "owner": "",
+                        "spritesheetUrl": f"https://pub-94495283df974cfea5e98d6a9e3fa462.r2.dev/curated/{slug}/spritesheet.webp",
+                    })
+            except Exception as ex:
+                err_msg = str(ex)
+                def error():
+                    self.pd_status.setText(f"❌ 加载失败: {err_msg[:50]}")
+                    self.pd_refresh_btn.setEnabled(True)
+                QApplication.instance().postEvent(self, _UIEvent(error))
+                return
+
+            def update():
+                self.pd_refresh_btn.setEnabled(True)
+                if not entries:
+                    self.pd_status.setText("⚠️ 未找到桌宠，请确认网络或稍后重试")
+                    self._pd_filter()
+                    return
+                self._pd_all = entries
+                self.pd_status.setText(f"共 {len(entries)} 个桌宠")
+                self._pd_filter()
+            QApplication.instance().postEvent(self, _UIEvent(update))
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _pd_filter(self):
+        query = self.pd_search.text().strip().lower()
+        for i in reversed(range(self.pd_layout.count())):
+            item = self.pd_layout.itemAt(i)
+            if item and item.widget():
+                item.widget().deleteLater()
+
+        if not self._pd_all:
+            lbl = QLabel("点击「加载图库」浏览社区宠物，或在搜索框输入 ID 直接下载")
+            lbl.setStyleSheet("color: #aaa; font-size: 13px; padding: 40px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            self.pd_layout.addWidget(lbl, 0, 0, 1, 4)
+            return
+
+        if query:
+            self._pd_filtered = [p for p in self._pd_all if query in p["displayName"].lower() or query in p["id"].lower()]
+        else:
+            self._pd_filtered = list(self._pd_all)
+
+        if not self._pd_filtered:
+            lbl = QLabel("没有找到匹配的桌宠，试试直接输入 ID")
+            lbl.setStyleSheet("color: #aaa; font-size: 13px; padding: 40px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            self.pd_layout.addWidget(lbl, 0, 0, 1, 4)
+            self.pd_info.setText("")
+            return
+
+        self.pd_info.setText(f"显示 {len(self._pd_filtered)} 个")
+        base = os.path.join(_get_base_dir(), "pets")
+        for i, pet in enumerate(self._pd_filtered):
+            card = self._make_community_card(pet, base)
+            self.pd_layout.addWidget(card, i // 4, i % 4)
+
+    def _make_community_card(self, pet, base_dir):
+        pid = pet["id"]
+        name = pet["displayName"]
+        owner = pet.get("owner", "")
+        installed = os.path.exists(os.path.join(base_dir, pid, "pet.json"))
+
+        card = QFrame()
+        card.setStyleSheet("""
+            QFrame { background: white; border-radius: 10px; padding: 8px; }
+            QFrame:hover { background: #f8f9ff; }
+        """)
+        card.setFixedSize(170, 210)
+
+        cl = QVBoxLayout(card)
+        cl.setContentsMargins(6, 6, 6, 6)
+        cl.setSpacing(3)
+
+        preview = QLabel()
+        preview.setFixedSize(110, 120)
+        preview.setAlignment(Qt.AlignCenter)
+        preview.setStyleSheet("background: #f5f5f5; border-radius: 6px;")
+        cl.addWidget(preview, alignment=Qt.AlignCenter)
+
+        name_lbl = QLabel(name)
+        name_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
+        name_lbl.setAlignment(Qt.AlignCenter)
+        name_lbl.setWordWrap(True)
+        cl.addWidget(name_lbl)
+
+        if owner:
+            owner_lbl = QLabel(f"👤 {owner}")
+            owner_lbl.setStyleSheet("color: #888; font-size: 10px;")
+            owner_lbl.setAlignment(Qt.AlignCenter)
+            owner_lbl.setWordWrap(True)
+            cl.addWidget(owner_lbl)
+
+        if installed:
+            row = QHBoxLayout()
+            row.setSpacing(4)
+            lbl = QLabel("✅ 已安装")
+            lbl.setStyleSheet("color: #28a745; font-size: 11px; padding: 2px;")
+            lbl.setAlignment(Qt.AlignCenter)
+            row.addWidget(lbl)
+            del_btn = QPushButton("🗑")
+            del_btn.setFixedSize(28, 24)
+            del_btn.setStyleSheet("""
+                QPushButton { background: #ff6b6b; color: white; border: none;
+                            border-radius: 4px; font-size: 11px; }
+                QPushButton:hover { background: #e05555; }
+            """)
+            del_btn.clicked.connect(lambda checked, p=pid, n=name: self._delete_community_pet(p, n))
+            row.addWidget(del_btn)
+            cl.addLayout(row)
+        else:
+            btn = QPushButton("⬇ 下载")
+            btn.setStyleSheet("""
+                QPushButton { background: #4A7AFF; color: white; border: none;
+                            padding: 5px; border-radius: 5px; font-size: 11px; }
+                QPushButton:hover { background: #3B6BE8; }
+                QPushButton:disabled { background: #ccc; }
+            """)
+            btn.clicked.connect(lambda checked, p=pid, n=name, b=btn: self._download_community(p, n, base_dir, b))
+            cl.addWidget(btn)
+
+        preview_url = pet.get("spritesheetUrl", "")
+        if preview_url:
+            def load(url=preview_url, lbl=preview):
+                try:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                    resp = urllib.request.urlopen(req, context=ctx, timeout=5)
+                    data = resp.read()
+                    img = Image.open(io_module.BytesIO(data)).convert("RGBA")
+                    if img.width > 500:
+                        cw = min(192, img.width)
+                        ch = min(208, img.height)
+                        frame = img.crop((0, 0, cw, ch))
+                    else:
+                        frame = img
+                    frame = frame.resize((110, 120), Image.NEAREST)
+                    qimg = QImage(frame.tobytes(), 110, 120, QImage.Format_RGBA8888)
+                    pm = QPixmap.fromImage(qimg)
+                    lbl.setPixmap(pm)
+                    lbl.setFixedSize(110, 120)
+                except Exception:
+                    pass
+            threading.Thread(target=load, daemon=True).start()
+        else:
+            def load_preview():
+                try:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                    surl = f"https://pub-94495283df974cfea5e98d6a9e3fa462.r2.dev/curated/{pid}/spritesheet.webp"
+                    req = urllib.request.Request(surl, headers={"User-Agent": "CodexPets/1.0"})
+                    resp = urllib.request.urlopen(req, context=ctx, timeout=8)
+                    data = resp.read()
+                    sheet = Image.open(io_module.BytesIO(data)).convert("RGBA")
+                    cw, ch = sheet.width // 8, sheet.height // 9
+                    frame = sheet.crop((0, 0, cw, ch)).resize((110, 120), Image.NEAREST)
+                    qimg = QImage(frame.tobytes(), 110, 120, QImage.Format_RGBA8888)
+                    pm = QPixmap.fromImage(qimg)
+                    def set_pm():
+                        preview.setPixmap(pm)
+                        preview.setFixedSize(110, 120)
+                    QApplication.instance().postEvent(self, _UIEvent(set_pm))
+                except Exception:
+                    pass
+            threading.Thread(target=load_preview, daemon=True).start()
+
+        return card
+
+    def _download_community(self, pid, name, base_dir, btn):
+        btn.setText("⏳...")
+        btn.setEnabled(False)
+        parent_layout = btn.parentWidget().layout() if btn.parentWidget() else None
+
+        def do():
+            ok = self._do_download_petdex(pid, base_dir)
+
+            def done():
+                if ok:
+                    btn.deleteLater()
+                    lbl = QLabel("✅ 已安装")
+                    lbl.setStyleSheet("color: #28a745; font-size: 11px; padding: 2px;")
+                    lbl.setAlignment(Qt.AlignCenter)
+                    if parent_layout:
+                        parent_layout.addWidget(lbl)
+                    QMessageBox.information(self, "下载完成", f"「{name}」已下载！\n可在菜单中切换使用。")
+                else:
+                    btn.setText("⬇ 重试")
+                    btn.setEnabled(True)
+            QApplication.instance().postEvent(self, _UIEvent(done))
+
+        threading.Thread(target=do, daemon=True).start()
+
+    def _delete_community_pet(self, pid, name):
+        base_dir = os.path.join(_get_base_dir(), "pets")
+        pet_folder = os.path.join(base_dir, pid)
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认删除")
+        msg.setText(f"确定要删除桌宠「{name}」吗？\n删除后需要重新下载才能使用。")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        msg.setStyleSheet("""
+            QMessageBox { background: white; }
+            QLabel { color: #333; font-size: 13px; }
+            QPushButton { padding: 6px 20px; border-radius: 4px; }
+        """)
+        reply = msg.exec()
+        if reply != QMessageBox.Yes:
+            return
+        try:
+            import shutil
+            shutil.rmtree(pet_folder)
+            self._pd_filter()
+            if isinstance(self.parent(), PetWindow):
+                self.parent()._refresh_pets()
+        except Exception as e:
+            QMessageBox.warning(self, "删除失败", f"删除「{name}」失败：{str(e)}")
+
+    def _do_download_petdex(self, pid, dest_dir):
+        try:
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            folder = os.path.join(dest_dir, pid)
+            os.makedirs(folder, exist_ok=True)
+
+            r2_base = f"https://pub-94495283df974cfea5e98d6a9e3fa462.r2.dev/curated/{pid}"
+
+            for url, fname in [(f"{r2_base}/pet.json", "pet.json"), (f"{r2_base}/spritesheet.webp", "spritesheet.webp")]:
+                try:
+                    req = urllib.request.Request(url, headers={"User-Agent": "CodexPets/1.0"})
+                    resp = urllib.request.urlopen(req, context=ctx, timeout=15)
+                    with open(os.path.join(folder, fname), "wb") as f:
+                        f.write(resp.read())
+                except Exception:
+                    gh_url = f"https://raw.githubusercontent.com/crafter-station/petdex/main/public/pets/{pid}/{fname}"
+                    req = urllib.request.Request(gh_url, headers={"User-Agent": "CodexPets/1.0"})
+                    resp = urllib.request.urlopen(req, context=ctx, timeout=15)
+                    with open(os.path.join(folder, fname), "wb") as f:
+                        f.write(resp.read())
+            return True
+        except Exception:
+            return False
+
+    # ────────────── Shared methods ──────────────
+
+    def _load_page(self, delta):
+        self._page = max(1, min(self._page + delta, self._total_pages))
+        self.status.setText(f"加载第 {self._page} 页...")
+        for attr in ["_nav_prev", "_nav_next"]:
+            btn = getattr(self, attr, None)
+            if btn:
+                btn.setEnabled(False)
+
+        def fetch():
+            data, total_pages, total, err = fetch_gallery(self._page, 40)
+            self._total_pages = total_pages
+
+            def update():
+                for attr in ["_nav_prev", "_nav_next"]:
+                    btn = getattr(self, attr, None)
+                    if btn:
+                        btn.setEnabled(True)
+                if err:
+                    self.status.setText(f"❌ 加载失败: {err[:40]}")
+                    return
+                self._all_pets_data = data
+                self.status.setText(f"共 {total} 个 | 第 {self._page}/{total_pages} 页")
+                self.page_label.setText(f"第 {self._page}/{total_pages} 页")
+                self._filter_display()
+
+            QApplication.instance().postEvent(self, _UIEvent(update))
+
+        threading.Thread(target=fetch, daemon=True).start()
+
+    def _make_card(self, pet, base_dir, source="official"):
         pid = pet.get("id", "")
         name = pet.get("displayName") or pid
         owner = pet.get("ownerName") or pet.get("ownerHandle") or pet.get("ownerId", "")
@@ -1477,7 +2122,10 @@ class StoreDialog(QDialog):
                 QPushButton:hover { background: #3B6BE8; }
                 QPushButton:disabled { background: #ccc; }
             """)
-            btn.clicked.connect(lambda checked, p=pid, n=name, b=btn: self._download(p, n, base_dir, b))
+            if source == "official":
+                btn.clicked.connect(lambda checked, p=pid, n=name, b=btn: self._download(p, n, base_dir, b))
+            else:
+                btn.clicked.connect(lambda checked, p=pid, n=name, b=btn: self._download_petdex(p, n, base_dir, b))
             cl.addWidget(btn)
 
         preview_url = pet.get("spritesheetUrl") or pet.get("previewUrl") or pet.get("posterUrl", "")
@@ -1508,35 +2156,6 @@ class StoreDialog(QDialog):
 
         return card
 
-    def _load_page(self, delta):
-        self._page = max(1, min(self._page + delta, self._total_pages))
-        self.status.setText(f"加载第 {self._page} 页...")
-        for attr in ["_nav_prev", "_nav_next"]:
-            btn = getattr(self, attr, None)
-            if btn:
-                btn.setEnabled(False)
-
-        def fetch():
-            data, total_pages, total, err = fetch_gallery(self._page, 40)
-            self._total_pages = total_pages
-
-            def update():
-                for attr in ["_nav_prev", "_nav_next"]:
-                    btn = getattr(self, attr, None)
-                    if btn:
-                        btn.setEnabled(True)
-                if err:
-                    self.status.setText(f"❌ 加载失败: {err[:40]}")
-                    return
-                self._all_pets_data = data
-                self.status.setText(f"共 {total} 个 | 第 {self._page}/{total_pages} 页")
-                self.page_label.setText(f"第 {self._page}/{total_pages} 页")
-                self._filter_display()
-
-            QApplication.instance().postEvent(self, _UIEvent(update))
-
-        threading.Thread(target=fetch, daemon=True).start()
-
     def _download(self, pid, name, base_dir, btn):
         btn.setText("⏳...")
         btn.setEnabled(False)
@@ -1553,7 +2172,7 @@ class StoreDialog(QDialog):
                     lbl.setAlignment(Qt.AlignCenter)
                     if parent_layout:
                         parent_layout.addWidget(lbl)
-                    QMessageBox.information(self, "下载完成", f"「{name}」已下载！\n重启程序后可用。")
+                    QMessageBox.information(self, "下载完成", f"「{name}」已下载！\n可在菜单中切换使用。")
                 else:
                     btn.setText("⬇ 重试")
                     btn.setEnabled(True)
@@ -1563,13 +2182,18 @@ class StoreDialog(QDialog):
         threading.Thread(target=do, daemon=True).start()
 
     def _delete_pet(self, pid, name, base_dir, btn):
-        reply = QMessageBox.question(
-            self,
-            "确认删除",
-            f"确定要删除桌宠「{name}」吗？\n删除后需要重新下载才能使用。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        msg = QMessageBox(self)
+        msg.setWindowTitle("确认删除")
+        msg.setText(f"确定要删除桌宠「{name}」吗？\n删除后需要重新下载才能使用。")
+        msg.setIcon(QMessageBox.Question)
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        msg.setStyleSheet("""
+            QMessageBox { background: white; }
+            QLabel { color: #333; font-size: 13px; }
+            QPushButton { padding: 6px 20px; border-radius: 4px; }
+        """)
+        reply = msg.exec()
         if reply != QMessageBox.Yes:
             return
 
@@ -1578,6 +2202,7 @@ class StoreDialog(QDialog):
             import shutil
             shutil.rmtree(pet_folder)
             self._filter_display()
+            self._pd_filter()
             if isinstance(self.parent(), PetWindow):
                 self.parent()._refresh_pets()
         except Exception as e:
